@@ -34,6 +34,7 @@ import javax.persistence.EntityManagerFactory;
 import javax.persistence.Persistence;
 import javax.transaction.UserTransaction;
 
+import org.jbpm.bpmn2.handler.SendTaskHandler;
 import org.jbpm.runtime.manager.impl.jpa.EntityManagerFactoryManager;
 import org.jbpm.runtime.manager.util.TestUtil;
 import org.jbpm.services.task.HumanTaskServiceFactory;
@@ -61,6 +62,7 @@ import org.kie.api.runtime.manager.audit.AuditService;
 import org.kie.api.runtime.manager.audit.NodeInstanceLog;
 import org.kie.api.runtime.manager.audit.ProcessInstanceLog;
 import org.kie.api.runtime.process.ProcessInstance;
+import org.kie.api.runtime.process.WorkItemHandler;
 import org.kie.api.task.TaskEvent;
 import org.kie.api.task.TaskLifeCycleEventListener;
 import org.kie.api.task.TaskService;
@@ -70,6 +72,7 @@ import org.kie.internal.io.ResourceFactory;
 import org.kie.internal.process.CorrelationAwareProcessRuntime;
 import org.kie.internal.process.CorrelationKey;
 import org.kie.internal.process.CorrelationKeyFactory;
+import org.kie.internal.runtime.manager.InternalRuntimeManager;
 import org.kie.internal.runtime.manager.TaskServiceFactory;
 import org.kie.internal.runtime.manager.context.CorrelationKeyContext;
 import org.kie.internal.runtime.manager.context.EmptyContext;
@@ -1319,6 +1322,137 @@ public class PerProcessInstanceRuntimeManagerTest extends AbstractBaseTest {
         }
         
         manager.disposeRuntimeEngine(runtime);     
+        manager.close();
+    }
+    @Test
+    public void testSignalEventWithDeactivate() {
+        RuntimeEnvironment environment = RuntimeEnvironmentBuilder.Factory.get()
+                .newDefaultBuilder()
+                .userGroupCallback(userGroupCallback)
+                .addAsset(ResourceFactory.newClassPathResource("events/start-on-event.bpmn"), ResourceType.BPMN2)
+                .get();
+        
+        manager = RuntimeManagerFactory.Factory.get().newPerProcessInstanceRuntimeManager(environment);        
+        assertNotNull(manager);
+        
+        RuntimeEngine runtime1 = manager.getRuntimeEngine(ProcessInstanceIdContext.get());
+        KieSession ksession1 = runtime1.getKieSession();
+          
+        ksession1.signalEvent("SampleEvent", null);        
+        
+        
+        List<? extends ProcessInstanceLog> logs = runtime1.getAuditService().findProcessInstances();
+        assertEquals(1, logs.size());
+        manager.disposeRuntimeEngine(runtime1);
+        
+        ((InternalRuntimeManager) manager).deactivate();
+        
+        runtime1 = manager.getRuntimeEngine(ProcessInstanceIdContext.get());
+        ksession1 = runtime1.getKieSession();
+        
+        ksession1.signalEvent("SampleEvent", null); 
+        
+        logs = runtime1.getAuditService().findProcessInstances();
+        assertEquals(1, logs.size());
+        manager.disposeRuntimeEngine(runtime1);
+        
+        ((InternalRuntimeManager) manager).activate();
+        
+        runtime1 = manager.getRuntimeEngine(ProcessInstanceIdContext.get());
+        ksession1 = runtime1.getKieSession();
+        
+        ksession1.signalEvent("SampleEvent", null); 
+        
+        logs = runtime1.getAuditService().findProcessInstances();
+        assertEquals(2, logs.size());
+        manager.disposeRuntimeEngine(runtime1);
+        
+    }
+    @Test(timeout=10000)
+    public void testTimerStartWithDeactivate() {
+        final CountDownProcessEventListener countDownListener = new CountDownProcessEventListener("Hello", 1);
+        RuntimeEnvironment environment = RuntimeEnvironmentBuilder.Factory.get()
+                .newDefaultBuilder()
+                .userGroupCallback(userGroupCallback)
+                .addAsset(ResourceFactory.newClassPathResource("BPMN2-TimerStart.bpmn2"), ResourceType.BPMN2)
+                .registerableItemsFactory(new DefaultRegisterableItemsFactory(){
+
+                    @Override
+                    public List<ProcessEventListener> getProcessEventListeners(RuntimeEngine runtime) {
+
+                        List<ProcessEventListener> listeners = super.getProcessEventListeners(runtime);
+                        listeners.add(countDownListener);
+                        return listeners;
+                    }
+                    
+                })
+                .get();
+        
+        manager = RuntimeManagerFactory.Factory.get().newPerProcessInstanceRuntimeManager(environment);        
+        assertNotNull(manager);
+        
+        countDownListener.waitTillCompleted();
+        
+        RuntimeEngine runtime1 = manager.getRuntimeEngine(ProcessInstanceIdContext.get());
+
+        List<? extends ProcessInstanceLog> logs = runtime1.getAuditService().findProcessInstances();
+        assertEquals(1, logs.size());
+        manager.disposeRuntimeEngine(runtime1);        
+        
+        ((InternalRuntimeManager) manager).deactivate();
+        
+        countDownListener.reset(1);
+        countDownListener.waitTillCompleted(2000);
+        
+        runtime1 = manager.getRuntimeEngine(ProcessInstanceIdContext.get());
+        
+        logs = runtime1.getAuditService().findProcessInstances();
+        assertEquals(1, logs.size());
+        manager.disposeRuntimeEngine(runtime1);
+        
+        ((InternalRuntimeManager) manager).activate();
+        
+        countDownListener.reset(1);
+        countDownListener.waitTillCompleted();        
+        
+        runtime1 = manager.getRuntimeEngine(ProcessInstanceIdContext.get());
+        
+        logs = runtime1.getAuditService().findProcessInstances();
+        assertEquals(2, logs.size());
+        manager.disposeRuntimeEngine(runtime1);
+        
+    }
+    
+    @Test
+    public void testEndMessageEventProcess() {
+        RuntimeEnvironment environment = RuntimeEnvironmentBuilder.Factory.get()
+                .newDefaultBuilder()
+                .userGroupCallback(userGroupCallback)
+                .addAsset(ResourceFactory.newClassPathResource("events/EndMessageEvent.bpmn2"), ResourceType.BPMN2)
+                .registerableItemsFactory(new DefaultRegisterableItemsFactory(){
+
+                    @Override
+                    public Map<String, WorkItemHandler> getWorkItemHandlers(RuntimeEngine runtime) {
+                        Map<String, WorkItemHandler> handlers = new HashMap<String, WorkItemHandler>();
+                        handlers.putAll(super.getWorkItemHandlers(runtime));
+                        handlers.put("Send Task", new SendTaskHandler());
+                        return handlers;
+                    }
+
+                    
+                    
+                })
+                .get();
+        
+        manager = RuntimeManagerFactory.Factory.get().newPerProcessInstanceRuntimeManager(environment);        
+        assertNotNull(manager);
+        // since there is no process instance yet we need to get new session
+        RuntimeEngine runtime = manager.getRuntimeEngine(ProcessInstanceIdContext.get());
+        KieSession ksession = runtime.getKieSession();
+
+        ProcessInstance pi1 = ksession.startProcess("test-process");
+  
+        assertEquals(ProcessInstance.STATE_COMPLETED, pi1.getState());        
         manager.close();
     }
 }
