@@ -149,12 +149,14 @@ public class PerCaseRuntimeManager extends AbstractRuntimeManager {
                 Object contexts = mapper.findContextId(ksession.getIdentifier(), this.identifier);
                 if (contexts instanceof Collection) {
                     RuntimeEngine finalRuntimeEngnie = runtime;
+                    KieSession finalKieSession = ksession;
                     ((Collection<Object>) contexts).forEach(o -> {
                         try {
                             
                             saveLocalRuntime(null, Long.parseLong(o.toString()), finalRuntimeEngnie);
                         } catch (NumberFormatException e) {
                             saveLocalRuntime(o.toString(), null, finalRuntimeEngnie);
+                            finalKieSession.getEnvironment().set("CaseId", o.toString());
                         }
                     });                    
                 }
@@ -662,13 +664,14 @@ public class PerCaseRuntimeManager extends AbstractRuntimeManager {
             } else {
                 Object contexts = mapper.findContextId(ksession.getIdentifier(), manager.getIdentifier());
                 if (contexts instanceof Collection) {
-                    
+                    KieSession finalKieSession = ksession;
                     ((Collection<Object>) contexts).forEach(o -> {
                         try {
                             
                             saveLocalRuntime(null, Long.parseLong(o.toString()), engine);
                         } catch (NumberFormatException e) {
                             saveLocalRuntime(o.toString(), null, engine);
+                            finalKieSession.getEnvironment().set("CaseId", o.toString());
                         }
                     });                    
                 }
@@ -680,6 +683,7 @@ public class PerCaseRuntimeManager extends AbstractRuntimeManager {
         @Override
         public TaskService initTaskService(Context<?> context, InternalRuntimeManager manager, RuntimeEngine engine) {
             InternalTaskService internalTaskService = (InternalTaskService) taskServiceFactory.newTaskService();
+            registerDisposeCallback(engine, new DisposeSessionTransactionSynchronization(manager, engine));
             configureRuntimeOnTaskService(internalTaskService, engine);
             return internalTaskService;
         }
